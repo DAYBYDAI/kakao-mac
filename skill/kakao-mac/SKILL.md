@@ -66,6 +66,7 @@ km messages --chat-id 123456789 --since 1d --json
 km messages --since 2h --limit 500 --json
 ```
 
+- 쓸 수 있는 옵션은 `--chat-id`, `--since`, `--limit`, `--json` 넷이다. 다른 옵션은 `km`이 거부한다. 방 이름으로 고르는 `--chat`도 거부한다. 이름 일부가 겹치는 다른 방이 열릴 수 있어서다.
 - `--since`는 `1h`, `24h`, `7d` 같은 형식이다. `--chat-id`를 빼면 모든 방에서 가져온다.
 - `--limit` 기본값이 50이라 기간이 길면 잘린다. 결과 개수가 limit과 같으면 잘렸다고 보고 limit을 키운다.
 - 한 메시지에는 `chat_id`, `id`, `is_from_me`, `sender_id`(있으면 `sender`), `text`, `timestamp`, `type`이 있다.
@@ -78,7 +79,7 @@ km messages --since 2h --limit 500 --json
 km search '견적' --limit 50 --json
 ```
 
-- 검색어는 작은따옴표로 감싼다. 결과는 메시지와 같은 모양이다.
+- 검색어는 한 덩어리로, 작은따옴표로 감싼다. `-`로 시작하는 검색어는 받지 않는다. 옵션은 `--limit`, `--json`만 된다. 결과는 메시지와 같은 모양이다.
 - 이 맥에 저장된 **모든 방**을 뒤진다. 방이나 기간을 고르는 옵션이 없다. 사용자가 방이나 기간을 정했으면 `search`를 쓰지 말고 `km messages --chat-id … --since …`로 가져온 결과 안에서 찾는다.
 
 ### 결과를 읽을 때

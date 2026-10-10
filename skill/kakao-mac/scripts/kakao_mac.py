@@ -840,11 +840,67 @@ def render_auth(resolved: ResolvedAuth, *, output_format: str, cache_path: Path)
     )
 
 
+# Options that may be passed on to kakaocli, and whether each takes a value.
+PASSTHROUGH_OPTIONS: dict[str, dict[str, bool]] = {
+    "chats": {"--limit": True, "--json": False},
+    # No --chat: kakaocli matches it as a substring of a display name and opens the first hit,
+    # so a room is always picked by its id (find it with `rooms --query`).
+    "messages": {"--chat-id": True, "--since": True, "--limit": True, "--json": False},
+    "search": {"--limit": True, "--json": False},
+    "schema": {},
+}
+PASSTHROUGH_POSITIONALS = {"chats": 0, "messages": 0, "search": 1, "schema": 0}
+
+
+def validate_forwarded_args(command: str, forwarded_args: Sequence[str]) -> list[str]:
+    """Pass on only the options listed above. --db and --key are always set by this helper,
+    so a caller can never point kakaocli at another file or supply another key.
+
+    Each value is handed over joined to its option (--since=VALUE), so a value that happens to
+    look like an option stays a value."""
+    options = PASSTHROUGH_OPTIONS[command]
+    checked: list[str] = []
+    positionals = 0
+    args = list(forwarded_args)
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg.startswith("-"):
+            name, has_value, inline = arg.partition("=")
+            if name not in options:
+                hint = ""
+                if command == "search":
+                    hint = " (text to search for cannot start with '-')"
+                elif command == "messages" and name == "--chat":
+                    hint = " (pick the room by number: --chat-id, found with `rooms --query`)"
+                raise AuthResolutionError(f"Unsupported option for {command}: {name}{hint}")
+            if not options[name]:
+                if has_value:
+                    raise AuthResolutionError(f"Option {name} does not take a value")
+                checked.append(name)
+            else:
+                if not has_value:
+                    index += 1
+                    if index >= len(args):
+                        raise AuthResolutionError(f"Option {name} needs a value")
+                    inline = args[index]
+                checked.append(f"{name}={inline}")
+        else:
+            positionals += 1
+            checked.append(arg)
+        index += 1
+    if positionals != PASSTHROUGH_POSITIONALS[command]:
+        expected = PASSTHROUGH_POSITIONALS[command]
+        raise AuthResolutionError(f"{command} takes {expected} plain argument(s), got {positionals}")
+    return checked
+
+
 def build_passthrough_command(command: str, auth: ResolvedAuth, forwarded_args: Sequence[str]) -> list[str]:
     if command not in READ_ONLY_COMMANDS:
         raise AuthResolutionError(
             f"Unsupported command '{command}'. Allowed read-only commands: {', '.join(READ_ONLY_COMMANDS)}"
         )
+    forwarded_args = validate_forwarded_args(command, forwarded_args)
     return [
         kakaocli_bin(),
         command,
@@ -906,12 +962,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             print(json.dumps(rooms, ensure_ascii=False, indent=1))
             return 0
-        # kakaocli echoes its own argv (including --key) in usage errors, so stderr never passes through unredacted.
+        # kakaocli echoes its own argv (including --key) in usage errors, so neither stream passes
+        # through without the key being removed first.
         result = subprocess.run(
             build_passthrough_command(args.command, resolved, forwarded_args),
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
         )
+        if result.stdout:
+            sys.stdout.write(redact_secret(result.stdout, resolved.key))
         if result.stderr:
             sys.stderr.write(redact_secret(result.stderr, resolved.key))
         return result.returncode
@@ -948,7 +1007,12 @@ def build_parser() -> argparse.ArgumentParser:
     rooms_parser.add_argument("--include-channels", action="store_true", help="Also list brand and ad channels.")
 
     for command in READ_ONLY_COMMANDS:
-        passthrough = subparsers.add_parser(command, help=f"Run kakaocli {command} with cached/recovered auth.")
+        # allow_abbrev off: a shortened option must reach the allow-list check, not match one of ours.
+        passthrough = subparsers.add_parser(
+            command,
+            help=f"Run kakaocli {command} with cached/recovered auth.",
+            allow_abbrev=False,
+        )
         add_auth_options(passthrough)
         passthrough.add_argument("--refresh-auth", action="store_true", help="Refresh cached auth before running.")
 
