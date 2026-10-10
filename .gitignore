@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+
+# 개인 데이터: 절대 커밋하지 않는다
+auth.json
+policy.json
+ledger.json
+notes-in.json
+attachments/
+skill-backups/
+*.part
+
+# OS
+.DS_Store
