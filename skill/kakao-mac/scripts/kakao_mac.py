@@ -22,6 +22,7 @@ import json
 import multiprocessing as mp
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -614,6 +615,8 @@ def run_query(auth: ResolvedAuth, sql: str) -> list[Any]:
         raise AuthResolutionError("kakaocli query timed out") from None
     if result.returncode != 0:
         message = redact_secret(result.stderr.strip() or result.stdout.strip(), auth.key)
+        if WRONG_KEY_MARKER in message:
+            raise AuthResolutionError(WRONG_KEY_HINT)
         raise AuthResolutionError(message[:300] or "kakaocli query failed")
     text = result.stdout.strip()
     if not text:
@@ -716,6 +719,7 @@ def list_rooms(
     query: str | None,
     limit: int,
     include_channels: bool,
+    only_type: str | None = None,
 ) -> list[dict[str, Any]]:
     """Rooms with their real titles, newest first. Many rooms store an empty
     chatName, so the title is filled from the open-link name, room meta, or the
@@ -756,6 +760,8 @@ def list_rooms(
             room["title"], room["title_source"] = title, "members"
         else:
             room["title"] = f"chat{room['chat_id']}"
+    if only_type:
+        rooms = [room for room in rooms if room["type"] == only_type]
     if needle:
         rooms = [room for room in rooms if needle in room["title"].casefold()]
     return rooms[:limit]
@@ -833,11 +839,26 @@ def render_auth(resolved: ResolvedAuth, *, output_format: str, cache_path: Path)
             f"- database: {resolved.database_path}",
             f"- cache: {cache_path} (owner-only file that holds the database key; do not print or share it)",
             "",
-            "You can now run:",
-            "  python3 kakao_mac.py rooms --limit 10",
-            "  python3 kakao_mac.py messages --chat-id <chat_id> --since 1d --json",
+            "Next: check that the database opens, without printing any chat content:",
+            f"  python3 {shlex.quote(str(Path(__file__).resolve()))} schema > /dev/null && echo READ_OK",
+            "Read room names or messages only when the user asks for them.",
         ]
     )
+
+
+WRONG_KEY_MARKER = "PRAGMA key failed"
+WRONG_KEY_HINT = (
+    "The saved key did not open the KakaoTalk database (the account may have changed, or KakaoTalk was "
+    "logged in again). Run this helper's `auth --refresh`. Do not follow kakaocli's advice to install sqlcipher."
+)
+
+
+def explain_kakaocli_error(text: str) -> str:
+    """kakaocli reports a wrong key as a cipher problem and suggests installing sqlcipher.
+    Say what it means for this helper instead."""
+    if WRONG_KEY_MARKER in text:
+        return text.rstrip("\n") + "\n" + WRONG_KEY_HINT + "\n"
+    return text
 
 
 # Options that may be passed on to kakaocli, and whether each takes a value.
@@ -850,6 +871,22 @@ PASSTHROUGH_OPTIONS: dict[str, dict[str, bool]] = {
     "schema": {},
 }
 PASSTHROUGH_POSITIONALS = {"chats": 0, "messages": 0, "search": 1, "schema": 0}
+# kakaocli ignores a --since it cannot parse and then returns messages with no time limit,
+# which reads more than the user asked for. Refuse such values here.
+PASSTHROUGH_VALUE_RULES: dict[str, tuple[re.Pattern[str], str]] = {
+    "--since": (
+        re.compile(r"[0-9]+(?:\.[0-9]+)?[smhdw]"),
+        "a number followed by s, m (minutes), h, d or w, such as 30m, 24h, 7d (a month is 30d)",
+    ),
+    "--limit": (re.compile(r"[1-9][0-9]{0,8}"), "a positive whole number"),
+    "--chat-id": (re.compile(r"[0-9]{1,20}"), "the number shown as chat_id by `rooms`"),
+}
+PASSTHROUGH_USAGE = {
+    "chats": "Options: --limit N, --json",
+    "messages": "Options: --chat-id N, --since 30m|24h|7d, --limit N, --json. Without --chat-id it reads every room.",
+    "search": "Usage: search 'TEXT' [--limit N] [--json]. It searches every room.",
+    "schema": "Takes no options.",
+}
 
 
 def validate_forwarded_args(command: str, forwarded_args: Sequence[str]) -> list[str]:
@@ -884,6 +921,9 @@ def validate_forwarded_args(command: str, forwarded_args: Sequence[str]) -> list
                     if index >= len(args):
                         raise AuthResolutionError(f"Option {name} needs a value")
                     inline = args[index]
+                rule = PASSTHROUGH_VALUE_RULES.get(name)
+                if rule and not rule[0].fullmatch(inline):
+                    raise AuthResolutionError(f"Option {name} takes {rule[1]}")
                 checked.append(f"{name}={inline}")
         else:
             positionals += 1
@@ -958,7 +998,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 resolved,
                 query=args.query,
                 limit=args.limit,
-                include_channels=args.include_channels,
+                include_channels=args.include_channels or args.room_type == ROOM_TYPE_LABELS[2],
+                only_type=args.room_type,
             )
             print(json.dumps(rooms, ensure_ascii=False, indent=1))
             return 0
@@ -972,7 +1013,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if result.stdout:
             sys.stdout.write(redact_secret(result.stdout, resolved.key))
         if result.stderr:
-            sys.stderr.write(redact_secret(result.stderr, resolved.key))
+            sys.stderr.write(explain_kakaocli_error(redact_secret(result.stderr, resolved.key)))
         return result.returncode
     except PermissionError:
         print(f"error: {FULL_DISK_ACCESS_HINT}", file=sys.stderr)
@@ -1005,12 +1046,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     rooms_parser.add_argument("--limit", type=positive_int, default=30)
     rooms_parser.add_argument("--include-channels", action="store_true", help="Also list brand and ad channels.")
+    rooms_parser.add_argument(
+        "--type",
+        dest="room_type",
+        choices=sorted(set(ROOM_TYPE_LABELS.values())),
+        help="Keep only rooms of this kind, for example '나와의 채팅' to find the chat with yourself.",
+    )
+    rooms_parser.add_argument("--json", action="store_true", help="Accepted and ignored: the output is always JSON.")
 
     for command in READ_ONLY_COMMANDS:
         # allow_abbrev off: a shortened option must reach the allow-list check, not match one of ours.
         passthrough = subparsers.add_parser(
             command,
             help=f"Run kakaocli {command} with cached/recovered auth.",
+            description=f"Run kakaocli {command} with the saved key. {PASSTHROUGH_USAGE[command]}",
+            epilog="The options listed under 'options' below belong to this helper (key lookup). "
+            "Any other option is refused.",
             allow_abbrev=False,
         )
         add_auth_options(passthrough)

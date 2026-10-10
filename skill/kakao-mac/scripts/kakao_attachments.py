@@ -17,8 +17,8 @@
   - 항상 받는 방(policy always)은 방 크기와 상관없이 받는다.
   - 받지 않기로 한 방(policy never)은 이름만 적는다.
   - 그 밖의 1:1·단톡은 --big-room(기본 150명) 미만이면 받는다.
-  - 항상 받는 방으로 등록하지 않은 오픈챗과 큰 방은 이름만 적는다.
-    --all-open-chats를 주면 오픈챗도 방 크기 규칙에 따라 받는다.
+  - 항상 받는 방으로 등록하지 않은 오픈챗, 오픈채팅에서 시작한 1:1, 큰 방은 이름만 적는다.
+    --all-open-chats를 주면 오픈챗과 오픈채팅 1:1도 방 크기 규칙에 따라 받는다.
   - 영상, --max-mb(기본 100MB)를 넘는 파일, 문서·사진·음성이 아닌 파일은 이름·크기만 적는다.
 
 안전
@@ -584,6 +584,9 @@ def decide(it: dict, big_room: int, max_bytes: int, always: set[int], all_open: 
         return ""
     if it["room_type"] == "오픈챗" and not all_open:
         return "항상 받는 방으로 등록하지 않은 오픈챗이라 이름만"
+    if it["room_type"] == "오픈DM" and not all_open:
+        # 오픈채팅에서 시작한 1:1은 모르는 사람일 수 있다. 오픈챗과 같은 기본값을 쓴다.
+        return "항상 받는 방으로 등록하지 않은 오픈챗 1:1이라 이름만"
     if it["members"] >= big_room:
         return f"{it['members']}명 방이라 이름만({big_room}명 이상)"
     return ""
@@ -632,7 +635,7 @@ def prune(recs: dict, photo_keep_days: int, always: set[int], big_room: int, all
         is_always = int(r.get("chat_id") or 0) in always
         if int(r.get("chat_id") or 0) in never:
             why = "받지 않기로 한 방이라 이름만(받았던 사본 지움)"
-        elif not is_always and r.get("room_type") == "오픈챗" and not all_open:
+        elif not is_always and r.get("room_type") in ("오픈챗", "오픈DM") and not all_open:
             why = "항상 받는 방으로 등록하지 않은 오픈챗이라 이름만(받았던 사본 지움)"
         elif not is_always and int(r.get("members") or 0) >= big_room:
             why = f"{r.get('members')}명 방이라 이름만({big_room}명 이상)(받았던 사본 지움)"
@@ -847,7 +850,7 @@ def cmd_note(args) -> int:
     여기서 읽는다. 사람이 손으로 하나만 넣을 때만 `note <id> <요약>`."""
     if args.file:
         try:
-            pairs = json.loads(Path(args.file).read_text(encoding="utf-8"))
+            pairs = json.loads(Path(args.file).expanduser().read_text(encoding="utf-8"))
         except (OSError, ValueError) as ex:
             print(f"요약 파일을 못 읽음: {type(ex).__name__}", file=sys.stderr)
             return 1
@@ -889,7 +892,7 @@ def main(argv=None) -> int:
                    help="이 방들의 첨부만 받는다(chatId 여러 개는 쉼표). 없으면 받는 범위 기본값에 드는 모든 방")
     f.add_argument("--big-room", type=int, default=150)
     f.add_argument("--max-mb", type=int, default=100)
-    f.add_argument("--all-open-chats", action="store_true", help="항상 받는 방(policy always)으로 등록하지 않은 오픈챗도 방 크기에 따라 받는다")
+    f.add_argument("--all-open-chats", action="store_true", help="항상 받는 방(policy always)으로 등록하지 않은 오픈챗과 오픈채팅 1:1도 방 크기에 따라 받는다")
     f.add_argument("--photo-keep-days", type=int, default=14, help="받은 사진 사본을 며칠 뒤 지울지")
     f.add_argument("--no-prune", action="store_true", help="받아 둔 첨부와 기록을 정리하지 않는다")
     l = sub.add_parser("list", help="받아 둔 첨부의 요약과 상태를 본다")
