@@ -1,5 +1,20 @@
 # 검증 기록
 
+## 2026-10-22 공개 직후 다시 확인
+
+10/10에 만든 판을 그대로 공개했다. 공개한 뒤 아래를 다시 돌렸다. 환경은 10/10과 같은 맥이다.
+
+| 항목 | 방법 | 결과 |
+|---|---|---|
+| 저장소 받기 | 로그인 정보 없이 `git clone https://github.com/DAYBYDAI/kakao-mac.git`, AGENTS.md 원문 주소 읽기 | 받아짐, 원문 HTTP 200 |
+| kakaocli 받을 곳 | 로그인 정보 없이 `silver-flight-group/homebrew-tap`, `silver-flight-group/kakaocli` v0.6.0 받기 | 둘 다 받아짐 |
+| 직접 빌드 | v0.6.0 `swift build -c release`를 Xcode로 한 번, 개발자 도구(Command Line Tools)만 지정해 한 번 | 14초, 36초. 둘 다 성공 |
+| 처음부터 설치·인증 | 받은 저장소의 `install.sh --skills-root <임시 폴더>`, 빈 `KAKAO_MAC_HOME`에서 `auth`. PATH는 `/usr/bin:/bin`만, macOS 기본 Python 3.9.6, 위에서 개발자 도구로 빌드한 kakaocli | 설치됨. 인증 5초. 방 목록 읽기 성공. 시험 뒤 임시 키 폴더를 지웠다 |
+| 인텔 맥 근거 | `file /Applications/KakaoTalk.app/Contents/MacOS/KakaoTalk`, kakaocli `Package.swift` | 카카오톡 맥 26.7.0은 인텔·Apple Silicon 겸용 앱이다. kakaocli는 설치할 때 그 맥에서 빌드하고 sqlcipher를 `pkg-config`로 찾는다. 경로를 고정하지 않아 인텔 Homebrew(`/usr/local`)에서도 찾을 수 있다. 인텔 맥 실기 시험은 여전히 하지 않았다 |
+| 시크릿 검사 | gitleaks 8.30.1(폴더, 커밋 이력), 만든 사람의 계정 번호·기기 번호·DB 이름·키 앞부분·방 번호·개인 경로·주변 사람 이름 글자 검색 | 0건 |
+
+참고: k-skill의 `kakaotalk-mac` 안내는 2026-06-16부터 `katok` CLI 설치(`brew tap NomaDamas/katok`, `cargo install katok`)를 안내한다. 2026-10-22에 확인했을 때 그 저장소는 공개돼 있지 않고 crates.io에도 없어서 그 안내대로는 설치되지 않는다. 이 저장소는 kakaocli를 쓴다.
+
 ## 2026-10-10 첫 공개본
 
 환경: macOS 26.6.2 (Apple Silicon), 카카오톡 맥 26.7.0 (한국어 화면, 로그인 상태), kakaocli v0.6.0 (`--version`은 0.4.1로 표시됨), Python 3.11.16과 macOS 기본 Python 3.9.6.
